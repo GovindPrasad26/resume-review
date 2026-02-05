@@ -23,6 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
+backend/.env
+frontend/resume/.env
 .env
-.env.local
-.env.*.local
+node_modules/
