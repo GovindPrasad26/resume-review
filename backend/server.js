@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
-const PDFParser = require("pdf2json"); // కొత్త లైబ్రరీ
+const pdf = require('pdf-parse'); // Stable version 1.1.1
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const cors = require('cors');
 
@@ -16,19 +16,13 @@ app.post('/resume/score', upload.single('resume'), async (req, res) => {
         const { jobDescription } = req.body;
         if (!req.file) return res.status(400).send("No resume uploaded.");
 
-        // PDF నుండి టెక్స్ట్ తీసే కొత్త పద్ధతి
-        const pdfParser = new PDFParser(null, 1); // 1 అంటే టెక్స్ట్ మోడ్
-        
-        const resumeText = await new Promise((resolve, reject) => {
-            pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
-            pdfParser.on("pdfParser_dataReady", pdfData => {
-                resolve(pdfParser.getRawTextContent());
-            });
-            pdfParser.parseBuffer(req.file.buffer);
-        });
+        // 1. Convert PDF Buffer to Text
+        const pdfData = await pdf(req.file.buffer);
+        const resumeText = pdfData.text;
 
-        // 2. AI ప్రాసెసింగ్
+        // 2. Prepare the AI
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
         const prompt = `
             Evaluate this resume against the job description.
             Resume: ${resumeText}
