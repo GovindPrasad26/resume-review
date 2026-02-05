@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
-const pdf = require('pdf-parse'); 
+const PDFParser = require("pdf2json"); // కొత్త లైబ్రరీ
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const cors = require('cors');
 
@@ -14,31 +14,27 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 app.post('/resume/score', upload.single('resume'), async (req, res) => {
     try {
         const { jobDescription } = req.body;
-        const resumeFile = req.file;
+        if (!req.file) return res.status(400).send("No resume uploaded.");
 
-        if (!resumeFile) return res.status(400).send("No resume uploaded.");
+        // PDF నుండి టెక్స్ట్ తీసే కొత్త పద్ధతి
+        const pdfParser = new PDFParser(null, 1); // 1 అంటే టెక్స్ట్ మోడ్
+        
+        const resumeText = await new Promise((resolve, reject) => {
+            pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
+            pdfParser.on("pdfParser_dataReady", pdfData => {
+                resolve(pdfParser.getRawTextContent());
+            });
+            pdfParser.parseBuffer(req.file.buffer);
+        });
 
-        // FIX: pdf-parse handles extraction here
-        // We use a fallback logic to ensure the function is called correctly
-        let resumeText = "";
-        try {
-            const data = await pdf(resumeFile.buffer);
-            resumeText = data.text;
-        } catch (e) {
-            // Some versions export differently, let's try a direct call
-            const directPdf = require('pdf-parse/lib/pdf-parse.js');
-            const data = await directPdf(resumeFile.buffer);
-            resumeText = data.text;
-        }
-
+        // 2. AI ప్రాసెసింగ్
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
         const prompt = `
             Evaluate this resume against the job description.
             Resume: ${resumeText}
             JD: ${jobDescription}
 
-            Return ONLY a JSON object with this exact structure:
+            Return ONLY a JSON object:
             {
               "matchScore": number,
               "matchedSkills": [],
@@ -55,7 +51,7 @@ app.post('/resume/score', upload.single('resume'), async (req, res) => {
 
     } catch (error) {
         console.error("Server Error:", error);
-        res.status(500).json({ error: "Failed to analyze resume", details: error.message });
+        res.status(500).json({ error: "Analysis failed", details: error.message });
     }
 });
 
