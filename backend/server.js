@@ -18,23 +18,21 @@ app.post('/resume/score', upload.single('resume'), async (req, res) => {
 
         if (!resumeFile) return res.status(400).send("No resume uploaded.");
 
-        // FIX: Ensuring pdf-parse is called correctly regardless of environment
-        let pdfData;
+        // FIX: pdf-parse handles extraction here
+        // We use a fallback logic to ensure the function is called correctly
+        let resumeText = "";
         try {
-            // Check if pdf is a function or has a .default property
-            const parse = typeof pdf === 'function' ? pdf : pdf.default;
-            pdfData = await parse(resumeFile.buffer);
-        } catch (pdfError) {
-            console.error("PDF Parsing Error:", pdfError);
-            return res.status(500).json({ error: "Could not read PDF file" });
+            const data = await pdf(resumeFile.buffer);
+            resumeText = data.text;
+        } catch (e) {
+            // Some versions export differently, let's try a direct call
+            const directPdf = require('pdf-parse/lib/pdf-parse.js');
+            const data = await directPdf(resumeFile.buffer);
+            resumeText = data.text;
         }
 
-        const resumeText = pdfData.text;
-
-        // 2. Prepare the AI
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        // 3. The Prompt
         const prompt = `
             Evaluate this resume against the job description.
             Resume: ${resumeText}
@@ -53,19 +51,14 @@ app.post('/resume/score', upload.single('resume'), async (req, res) => {
         const response = await result.response;
         let text = response.text().replace(/```json|```/g, "").trim();
         
-        // 4. Send the result back
         res.json(JSON.parse(text));
 
     } catch (error) {
-        console.error("Server Error Details:", error);
-        res.status(500).json({ 
-            error: "Failed to analyze resume", 
-            details: error.message 
-        });
+        console.error("Server Error:", error);
+        res.status(500).json({ error: "Failed to analyze resume", details: error.message });
     }
 });
 
-// Port Binding for Render
 const PORT = process.env.PORT || 9393;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
