@@ -38,7 +38,7 @@ const Resume = () => {
 
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:9393/resume/score", {
+      const res = await fetch("https://resume-review-1-czmn.onrender.com/resume/score", {
         method: "POST",
         body: formData,
       });
