@@ -9,23 +9,25 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// File upload config (10MB max)
+// ===============================
+// FILE UPLOAD CONFIG
+// ===============================
 const upload = multer({
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-
 // ===============================
-// PDF TEXT EXTRACTION (Node 24 safe)
+// PDF TEXT EXTRACTION (Node 24 Safe)
 // ===============================
 async function extractTextFromPDF(buffer) {
-  // Dynamic import for ESM module
   const pdfjsLib = await import("pdfjs-dist/build/pdf.mjs");
 
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(buffer),
+    standardFontDataUrl:
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/standard_fonts/",
   });
 
   const pdfDoc = await loadingTask.promise;
@@ -35,12 +37,12 @@ async function extractTextFromPDF(buffer) {
     const page = await pdfDoc.getPage(i);
     const content = await page.getTextContent();
 
-    text += content.items.map(item => item.str).join(" ") + "\n";
+    text += content.items.map((item) => item.str).join(" ") + "\n";
   }
 
-  return text;
+  // Prevent huge prompts (important for AI)
+  return text.slice(0, 15000);
 }
-
 
 // ===============================
 // API ROUTE
@@ -59,6 +61,7 @@ app.post("/resume/score", upload.single("resume"), async (req, res) => {
 
     // Extract PDF text
     let resumeText;
+
     try {
       resumeText = await extractTextFromPDF(req.file.buffer);
     } catch (err) {
@@ -68,13 +71,20 @@ app.post("/resume/score", upload.single("resume"), async (req, res) => {
       });
     }
 
-    // Gemini AI
+    // ===============================
+    // GEMINI AI
+    // ===============================
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-1.5-flash-latest",
     });
 
     const prompt = `
-Evaluate this resume against the job description.
+You are an expert ATS resume evaluator.
+
+Evaluate the resume against the job description.
+
+Return ONLY valid JSON.
+Do NOT add explanations or markdown.
 
 Resume:
 ${resumeText}
@@ -82,13 +92,13 @@ ${resumeText}
 Job Description:
 ${jobDescription}
 
-Return ONLY valid JSON:
+JSON format:
 
 {
-  "matchScore": number,
-  "matchedSkills": [],
-  "missingSkills": [],
-  "recommendations": []
+  "matchScore": 0-100,
+  "matchedSkills": ["skill"],
+  "missingSkills": ["skill"],
+  "recommendations": ["improvement tip"]
 }
 `;
 
@@ -98,25 +108,27 @@ Return ONLY valid JSON:
     let text = response.text().replace(/```json|```/g, "").trim();
 
     let parsed;
+
     try {
       parsed = JSON.parse(text);
-    } catch {
+    } catch (err) {
+      console.error("Invalid JSON from AI:", text);
+
       return res.status(500).json({
         error: "AI returned invalid JSON",
       });
     }
 
     res.json(parsed);
-
   } catch (error) {
     console.error("Server Error:", error);
+
     res.status(500).json({
       error: "Analysis failed",
       details: error.message,
     });
   }
 });
-
 
 // ===============================
 // START SERVER
