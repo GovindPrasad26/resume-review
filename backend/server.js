@@ -10,16 +10,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===============================
-// FILE UPLOAD CONFIG
-// ===============================
+/* =====================================
+   FILE UPLOAD CONFIG
+===================================== */
 const upload = multer({
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
-// ===============================
-// GEMINI SETUP
-// ===============================
+/* =====================================
+   GEMINI SETUP + API KEY TEST
+===================================== */
 if (!process.env.GEMINI_API_KEY) {
   console.error("❌ GEMINI_API_KEY missing in .env file");
   process.exit(1);
@@ -27,9 +27,27 @@ if (!process.env.GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ===============================
-// PDF TEXT EXTRACTION
-// ===============================
+// ✅ Test API key on startup
+async function testGeminiKey() {
+  try {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash-002", // ✅ stable working model
+    });
+
+    const result = await model.generateContent("Say hello in one word.");
+    const text = result.response.text();
+
+    console.log("✅ Gemini API key working!");
+    console.log("Test response:", text);
+  } catch (err) {
+    console.error("❌ Gemini API key FAILED:");
+    console.error(err.message);
+  }
+}
+
+/* =====================================
+   PDF TEXT EXTRACTION (Node 24 safe)
+===================================== */
 async function extractTextFromPDF(buffer) {
   try {
     const pdfjsLib = await import("pdfjs-dist/build/pdf.mjs");
@@ -50,7 +68,6 @@ async function extractTextFromPDF(buffer) {
       text += content.items.map((item) => item.str).join(" ") + "\n";
     }
 
-    // Prevent huge prompts
     return text.slice(0, 15000);
   } catch (error) {
     console.error("PDF extraction error:", error);
@@ -58,9 +75,9 @@ async function extractTextFromPDF(buffer) {
   }
 }
 
-// ===============================
-// RESUME SCORING API
-// ===============================
+/* =====================================
+   RESUME SCORING API
+===================================== */
 app.post("/resume/score", upload.single("resume"), async (req, res) => {
   try {
     const { jobDescription } = req.body;
@@ -73,14 +90,10 @@ app.post("/resume/score", upload.single("resume"), async (req, res) => {
       return res.status(400).json({ error: "Job description required." });
     }
 
-    // Extract resume text
     const resumeText = await extractTextFromPDF(req.file.buffer);
 
-    // ===============================
-    // GEMINI MODEL (FIXED MODEL NAME)
-    // ===============================
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-1.5-flash-002",
     });
 
     const prompt = `
@@ -89,7 +102,6 @@ You are an expert ATS resume evaluator.
 Evaluate the resume against the job description.
 
 Return ONLY valid JSON.
-Do NOT add explanations or markdown.
 
 Resume:
 ${resumeText}
@@ -97,38 +109,23 @@ ${resumeText}
 Job Description:
 ${jobDescription}
 
-JSON format:
-
 {
   "matchScore": 0-100,
   "matchedSkills": ["skill"],
   "missingSkills": ["skill"],
-  "recommendations": ["improvement tip"]
+  "recommendations": ["tip"]
 }
 `;
 
-    let result;
-
-    try {
-      result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-      });
-    } catch (err) {
-      console.error("Gemini API error:", err);
-      return res.status(500).json({
-        error: "AI service failed",
-      });
-    }
-
-    const response = await result.response;
-    let text = response.text().replace(/```json|```/g, "").trim();
+    const result = await model.generateContent(prompt);
+    const response = result.response.text().replace(/```json|```/g, "").trim();
 
     let parsed;
 
     try {
-      parsed = JSON.parse(text);
-    } catch (err) {
-      console.error("Invalid JSON from AI:", text);
+      parsed = JSON.parse(response);
+    } catch {
+      console.error("Invalid JSON from AI:", response);
       return res.status(500).json({
         error: "AI returned invalid JSON",
       });
@@ -145,18 +142,23 @@ JSON format:
   }
 });
 
-// ===============================
-// HEALTH CHECK ROUTE
-// ===============================
+/* =====================================
+   HEALTH CHECK
+===================================== */
 app.get("/", (req, res) => {
-  res.send("Resume scoring API is running 🚀");
+  res.send("Resume scoring API running 🚀");
 });
 
-// ===============================
-// START SERVER
-// ===============================
+/* =====================================
+   START SERVER
+===================================== */
+console.log("API KEY:", process.env.GEMINI_API_KEY);
+
 const PORT = process.env.PORT || 10000;
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, "0.0.0.0", async () => {
   console.log(`✅ Server running on port ${PORT}`);
+
+  // 🔥 test API key automatically
+  await testGeminiKey();
 });
